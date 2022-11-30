@@ -28,7 +28,7 @@ class CellDetection:
                 called "rejected/" is created which contains all the rejected cells  
     """
 
-    def __init__(self, path, out_path, signals, url='', frame_size=1000, conf_thresh=0.2, bbox_margin=0.1, aspect_thresh=0.6, keep_rejects=True):
+    def __init__(self, path, out_path, signals, fileinfo, debug=False, url='', frame_size=1000, conf_thresh=0.2, bbox_margin=0.05, aspect_thresh=0.5, keep_rejects=True):
         """
         Constructor
 
@@ -46,6 +46,8 @@ class CellDetection:
         self._URL = url
         self._path = path
         self.signals = signals
+        self.fileinfo = fileinfo
+        self.debug = debug
         self.model = self.__load_model()
         self.conf_thresh = conf_thresh
         self.classes = self.model.names
@@ -146,9 +148,7 @@ class CellDetection:
         self.model.to(self.device)
         frame = [frame]
         results = self.model(frame)
-        # print(results.pandas().xyxyn[0])
         labels, cord = results.xyxyn[0][:, -1], results.xyxyn[0][:, :-1]
-        # print(labels)
         return labels, cord
 
     def __class_to_label(self, x):
@@ -224,7 +224,7 @@ class CellDetection:
         Convert relative coordinates to frame-relative pixel coordinates
 
         Args:
-            cord (tensor): Relative coordinates
+            cordi (tensor): Relative coordinates
         Returns:
             cord (list): Pixel coordinates
         """
@@ -237,6 +237,16 @@ class CellDetection:
         return cord.tolist()
 
     def __get_abs_cord(self, cordi, loc):
+        """
+        Gets absolute coordinates relative to the stacked image
+
+        Args:
+            cordi (list): Pixel coordinates relative to frame
+            loc (list): 2D Location of the frame on the stacked image
+
+        Returns:
+            cord (list): A list of absolute coordinates
+        """
         cord = cordi.copy()
         fact = int(self.frame_size)
         cord[0], cord[2] = int(cord[0] + (loc[1]*fact)
@@ -246,10 +256,11 @@ class CellDetection:
 
         return cord[:4]
 
-    def __get_filepath(self, case, loc, label, signal, accepted, count):
+    def __get_filepath(self, loc, label, signal, accepted, count):
         """
         Automatically generate filename
         """
+        case = self.fileinfo
         lab = 'i' if label == 0 else 'u'
         file_name = f'{case}_{loc[0]}_{loc[1]}_{count}_{signal}_' + lab
         dir = signal + '_cells/'
@@ -309,13 +320,14 @@ class CellDetection:
 
         return cell
 
-    def __save_cells(self, cells, acceptance, results, loc):
+    def __save_cells(self, cells, acceptance, coords, results, loc):
         """
         Generate output images for each cell and populate the dataframe with relevant data
 
         Args:
             cells (list of 2D nympy arrays): A list of cell images
             acceptance (list): A matrix with filtering information for each cell
+            coords (list): A list of frame-relative coordinates 
             results (tensor): Results from model
             loc (list): Index of the current frame
         """
@@ -329,9 +341,10 @@ class CellDetection:
                 cell = self.__mark_reject(cell, acceptance[i])
 
             path_name, file_name = self.__get_filepath(
-                'Case', loc, labels[i], 'DAPI', accepted, self.cellcount)
+                loc, labels[i], 'DAPI', accepted, self.cellcount)
 
-            pixcord = self.__get_pixel_cord(cord[i])
+            pixcord = coords[i]
+            pixcord.append(cord[i].tolist()[-1])
             abscord = self.__get_abs_cord(pixcord, loc)
             self.__populate_df(file_name, pixcord,
                                labels[i], acceptance[i], loc, abscord)
@@ -340,6 +353,9 @@ class CellDetection:
             self.cellcount += 1
 
     def __save_signals(self):
+        """
+        Generate output images for each signal other than DAPI
+        """
 
         celldf = self.df[[
             'Xmin_abs', 'Ymin_abs', 'Xmax_abs', 'Ymax_abs', 'Accepted', 'Frame_Row', 'Frame_Col', 'Informative']]
@@ -355,7 +371,7 @@ class CellDetection:
                     continue
                 cell = img[y1:y2+1, x1:x2+1]
                 path_name, _ = self.__get_filepath(
-                    'Case', [fr, fc], label, signal, accepted, count)
+                    [fr, fc], int(1-label), signal, accepted, count)
 
                 cv.imwrite(path_name, cell)
                 cell = None
@@ -367,19 +383,19 @@ class CellDetection:
 
     def __call__(self):
         """
-        Call function responsible for reading DAPI image, create frames, detect cells, write cell images and the dataframe file
+        Call function responsible for reading DAPI image, create frames, detect cells, write cell images, signal images and the dataframe file
         """
 
         self.__make_dir()
         img = self._get_stacked_image('DAPI.jpg')
         frames, locs = self._get_frames(img)
         for i, frame in enumerate(frames):
-            # if i > 2:
-            #     break
+            if i > 2 and self.debug:
+                break
 
             results = self.__score_frame(frame)
-            cells, acceptance = self.__extract_cells(frame, results)
-            self.__save_cells(cells, acceptance, results, locs[i])
+            cells, acceptance, coords = self.__extract_cells(frame, results)
+            self.__save_cells(cells, acceptance, coords, results, locs[i])
 
             print(
                 f"{i+1}/{len(frames)} frames processed. Total cells Extracted: {self.cellcount}", end='\r')
@@ -423,7 +439,8 @@ class CellFilter():
 
         Returns:
             cells (list of numpy arrays): a list of all the cells
-            acceptance (list) : N x M boolean matrix. acceptance[n][m] is True if n_th cell passed the m_th filter otherwise False
+            acceptance (list): N x M boolean matrix. acceptance[n][m] is True if n_th cell passed the m_th filter otherwise False
+            coords (list): frame relative coordinates
         """
         self.image = image
         labels, cord = results
@@ -432,9 +449,9 @@ class CellFilter():
         self.n = len(labels)
         self.cord = cord
 
-        cells, acceptance = self.__apply_filters()
+        cells, acceptance, coords = self.__apply_filters()
 
-        return cells, acceptance
+        return cells, acceptance, coords
 
     def __apply_filters(self):
         """
@@ -443,17 +460,21 @@ class CellFilter():
         Returns:
             cells (list of numpy arrays): a list of all the cells
             acceptance (list) : N x M boolean matrix. acceptance[n][m] is True if n_th cell passed the m_th filter otherwise False
+            coords (list): frame-relative coordinates
         """
         n = self.n
         cells = []
         acceptance = []
+        coords = []
         good = True
         for i in range(n):
             good = [self.__conf_thresholding(i), self.__aspect_check(
                 i), self.__boundary_check(i), self.__contour_check(i)]
             acceptance.append(good)
-            cells.append(self.__cell_box(i))
-        return cells, acceptance
+            cell, cord = self.__cell_box(i)
+            cells.append(cell)
+            coords.append(cord)
+        return cells, acceptance, coords
 
     def __conf_thresholding(self, i):
         """
@@ -540,14 +561,17 @@ class CellFilter():
 
         x1, y1, x2, y2 = max(x1, 0), max(y1, 0), min(
             x2, x_shape), min(y2, y_shape)
-        return frame[y1:y2+1, x1:x2+1]
+        return frame[y1:y2+1, x1:x2+1], [x1, y1, x2, y2]
 
 
 ### TEST CODE ###
-# image_path = "Z:/Temp Out/2/"
-# output_dir = "Z:/Temp Out/2/Cells/"
+# image_path = "C:/PythonProjects/FISH Patterns/CellExtraction/test/"
+# output_dir = "C:/PythonProjects/FISH Patterns/CellExtraction/test/output/"
 # signals = ['DAPI', 'GFP', 'Orange']
+# fileprefix = 'Case-ID-this-that'
+# fileinfo = {'Case': 'C22', 'id': '522322', 'Probe': 'BCRABL'}
+
 
 # detection = CellDetection(
-#     path=image_path, out_path=output_dir, signals=signals)
+#     path=image_path, out_path=output_dir, signals=signals, fileinfo=fileprefix, debug=False)
 # detection()

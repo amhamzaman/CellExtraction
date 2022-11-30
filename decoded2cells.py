@@ -28,8 +28,8 @@ def stack(read_path, write_path, signals):
         canvas = None
 
 
-def generate_cells(read_path, write_path, signals):
-    detection = CellDetection(read_path, write_path, signals)
+def generate_cells(read_path, write_path, signals, f_prefix):
+    detection = CellDetection(read_path, write_path, signals, f_prefix)
     detection()
 
 
@@ -49,13 +49,14 @@ def parse_dir(dir, patternID):
     return case, id, probe
 
 
-#input_path = 'Z:/TEST_VSI\V-C22-08533-AC-D13CEN12-60X-09212022/_V-C22-08533-AC-D13CEN12-60X-09212022_/Decoded/'
+#input_path = 'Z:/TEST_VSI/V-C22-08533-AC-D13CEN12-60X-09212022/_V-C22-08533-AC-D13CEN12-60X-09212022_/Decoded/'
 stacking_input_path = 'C:/PythonProjects/FISH Patterns/FISH Stacks/'
 stacking_output_path = 'C:/PythonProjects/FISH Patterns/FISH Stacks/Stacked/'
 cell_output_path = 'C:/PythonProjects/FISH Patterns/Detected Cells/'
+fname_prefix = 'Case-ID-probe-date-etc'
 
 signals = get_signals(stacking_input_path)
 
 stack(stacking_input_path, stacking_output_path, signals)
 
-generate_cells(stacking_output_path, cell_output_path, signals)
+generate_cells(stacking_output_path, cell_output_path, signals, fname_prefix)
