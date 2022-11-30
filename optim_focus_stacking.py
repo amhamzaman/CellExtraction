@@ -267,9 +267,6 @@ def init_stacking(input_path, output_path, signal, section_size=1000):
             print('Regions processed: ', str(i)+'/' +
                   str(h_sections*w_sections), end='\r')
 
-        if i > 15:
-            break
-
     print('Regions processed: ', str(i)+'/'+str(h_sections*w_sections))
     return canvas
 

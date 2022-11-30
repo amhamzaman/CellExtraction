@@ -383,7 +383,7 @@ class CellDetection:
 
     def __call__(self):
         """
-        Call function responsible for reading DAPI image, create frames, detect cells, write cell images, signal images and the dataframe file
+        Call function responsible for reading DAPI image, create frames, detect cells, write cell images, signal images and the dataframe file.
         """
 
         self.__make_dir()
